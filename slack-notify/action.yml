@@ -1,0 +1,127 @@
+name: 'Slack PR Notification'
+description: 'Send Pull Request notifications to Slack with proper formatting and error handling'
+
+inputs:
+  webhook-url:
+    description: 'Slack webhook URL'
+    required: true
+  pr-title:
+    description: 'Pull Request title'
+    required: true
+  pr-author:
+    description: 'Pull Request author'
+    required: true
+  pr-branch:
+    description: 'Source branch name'
+    required: true
+  pr-target:
+    description: 'Target branch name'
+    required: true
+  pr-url:
+    description: 'Pull Request URL'
+    required: true
+  pr-description:
+    description: 'Pull Request description'
+    required: false
+    default: ''
+  action-type:
+    description: 'GitHub action type (opened, edited, etc.)'
+    required: false
+    default: 'opened'
+  repository-name:
+    description: 'Repository name for context'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install jq
+      run: sudo apt-get update && sudo apt-get install -y jq
+      shell: bash
+      
+    - name: Send Slack Notification
+      shell: bash
+      run: |
+        # Write PR data to files to safely handle special characters
+        echo '${{ inputs.pr-title }}' > /tmp/pr_title.txt
+        echo '${{ inputs.pr-description }}' > /tmp/pr_description.txt
+        echo '${{ inputs.pr-url }}' > /tmp/pr_url.txt
+        echo '${{ inputs.pr-author }}' > /tmp/pr_author.txt
+        echo '${{ inputs.pr-branch }}' > /tmp/pr_branch.txt
+        echo '${{ inputs.pr-target }}' > /tmp/target_branch.txt
+        
+        # Read from files to avoid shell interpretation issues
+        PR_TITLE=$(cat /tmp/pr_title.txt)
+        PR_DESCRIPTION=$(cat /tmp/pr_description.txt | tr -d '\r' | sed 's/`/'"'"'/g' | head -c 500)
+        PR_URL=$(cat /tmp/pr_url.txt)
+        PR_AUTHOR=$(cat /tmp/pr_author.txt)
+        PR_BRANCH=$(cat /tmp/pr_branch.txt)
+        TARGET_BRANCH=$(cat /tmp/target_branch.txt)
+        
+        # Add repository context if provided
+        REPO_CONTEXT=""
+        if [ -n "${{ inputs.repository-name }}" ]; then
+          REPO_CONTEXT="*Repository:* ${{ inputs.repository-name }}\n"
+        fi
+        
+        # Add truncation indicator if needed
+        if [ ${#PR_DESCRIPTION} -eq 500 ]; then
+          PR_DESCRIPTION="${PR_DESCRIPTION}..."
+        fi
+        
+        # Determine action type for message
+        case "${{ inputs.action-type }}" in
+          "edited")
+            ACTION_TYPE="📝 *Pull Request Updated*"
+            ;;
+          "reopened")
+            ACTION_TYPE="🔄 *Pull Request Reopened*"
+            ;;
+          *)
+            ACTION_TYPE="🆕 *New Pull Request Created*"
+            ;;
+        esac
+        
+        # Create message
+        cat > /tmp/slack_message.txt << EOF
+        $ACTION_TYPE
+        
+        ${REPO_CONTEXT}*Title:* $PR_TITLE
+        *Author:* $PR_AUTHOR
+        *Branch:* $PR_BRANCH → $TARGET_BRANCH
+        *Description:* ${PR_DESCRIPTION:-No description provided}
+        
+        *Link:* $PR_URL
+        EOF
+        
+        # Debug: Check if webhook URL is available
+        if [ -z "${{ inputs.webhook-url }}" ]; then
+          echo "❌ ERROR: webhook-url input is not provided"
+          echo "Please provide the Slack webhook URL as an input"
+          exit 1
+        fi
+        
+        # Send to Slack with proper JSON escaping
+        echo "🔄 Sending to Slack webhook..."
+        
+        # Use jq to properly escape JSON from our message file
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+          -H 'Content-type: application/json' \
+          -d "$(jq -n --rawfile text /tmp/slack_message.txt '{text: $text}')" \
+          "${{ inputs.webhook-url }}")
+        
+        # Extract HTTP status code (last line)
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        RESPONSE_BODY=$(echo "$RESPONSE" | head -n -1)
+        
+        if [ "$HTTP_CODE" -eq 200 ]; then
+          echo "✅ Slack notification sent successfully"
+        else
+          echo "❌ Failed to send Slack notification. HTTP Code: $HTTP_CODE"
+          echo "Response: $RESPONSE_BODY"
+          exit 1
+        fi
+        
+        # Clean up temporary files
+        rm -f /tmp/pr_title.txt /tmp/pr_description.txt /tmp/pr_url.txt /tmp/pr_author.txt /tmp/pr_branch.txt /tmp/target_branch.txt /tmp/slack_message.txt

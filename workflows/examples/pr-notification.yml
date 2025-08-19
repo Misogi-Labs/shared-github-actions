@@ -1,0 +1,64 @@
+name: PR Slack Notification (Example)
+
+on:
+  pull_request:
+    types: [opened, reopened, edited]
+    branches: [main, staging, master]
+  workflow_dispatch:
+    inputs:
+      pr_title:
+        description: 'PR Title for testing'
+        required: true
+        default: 'Test PR: Manual workflow trigger'
+      pr_description:
+        description: 'PR Description for testing'
+        required: false
+        default: 'This is a test notification triggered manually to validate the Slack integration.'
+      pr_author:
+        description: 'PR Author for testing'
+        required: true
+        default: 'test-user'
+      pr_branch:
+        description: 'PR Branch for testing'
+        required: true
+        default: 'feature/test-branch'
+
+jobs:
+  notify-slack:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Set PR details for workflow_dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "PR_TITLE=${{ github.event.inputs.pr_title }}" >> $GITHUB_ENV
+          echo "PR_DESCRIPTION=${{ github.event.inputs.pr_description }}" >> $GITHUB_ENV
+          echo "PR_AUTHOR=${{ github.event.inputs.pr_author }}" >> $GITHUB_ENV
+          echo "PR_BRANCH=${{ github.event.inputs.pr_branch }}" >> $GITHUB_ENV
+          echo "PR_TARGET=main" >> $GITHUB_ENV
+          echo "PR_URL=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_ENV
+          echo "ACTION_TYPE=manual" >> $GITHUB_ENV
+          
+      - name: Set PR details for pull_request
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "PR_TITLE=${{ github.event.pull_request.title }}" >> $GITHUB_ENV
+          echo "PR_DESCRIPTION=${{ github.event.pull_request.body }}" >> $GITHUB_ENV
+          echo "PR_AUTHOR=${{ github.event.pull_request.user.login }}" >> $GITHUB_ENV
+          echo "PR_BRANCH=${{ github.event.pull_request.head.ref }}" >> $GITHUB_ENV
+          echo "PR_TARGET=${{ github.event.pull_request.base.ref }}" >> $GITHUB_ENV
+          echo "PR_URL=${{ github.event.pull_request.html_url }}" >> $GITHUB_ENV
+          echo "ACTION_TYPE=${{ github.event.action }}" >> $GITHUB_ENV
+      
+      - name: Send Slack Notification
+        uses: your-org/shared-github-actions/slack-notify@main
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          pr-title: ${{ env.PR_TITLE }}
+          pr-author: ${{ env.PR_AUTHOR }}
+          pr-branch: ${{ env.PR_BRANCH }}
+          pr-target: ${{ env.PR_TARGET }}
+          pr-url: ${{ env.PR_URL }}
+          pr-description: ${{ env.PR_DESCRIPTION }}
+          action-type: ${{ env.ACTION_TYPE }}
+          repository-name: ${{ github.repository }}
