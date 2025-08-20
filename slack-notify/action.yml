@@ -42,36 +42,33 @@ runs:
       
     - name: Send Slack Notification
       shell: bash
+      env:
+        PR_TITLE: ${{ inputs.pr-title }}
+        PR_DESCRIPTION: ${{ inputs.pr-description }}
+        PR_URL: ${{ inputs.pr-url }}
+        PR_AUTHOR: ${{ inputs.pr-author }}
+        PR_BRANCH: ${{ inputs.pr-branch }}
+        TARGET_BRANCH: ${{ inputs.pr-target }}
+        WEBHOOK_URL: ${{ inputs.webhook-url }}
+        ACTION_TYPE_INPUT: ${{ inputs.action-type }}
+        REPOSITORY_NAME: ${{ inputs.repository-name }}
       run: |
-        # Write PR data to files to safely handle special characters
-        echo '${{ inputs.pr-title }}' > /tmp/pr_title.txt
-        echo '${{ inputs.pr-description }}' > /tmp/pr_description.txt
-        echo '${{ inputs.pr-url }}' > /tmp/pr_url.txt
-        echo '${{ inputs.pr-author }}' > /tmp/pr_author.txt
-        echo '${{ inputs.pr-branch }}' > /tmp/pr_branch.txt
-        echo '${{ inputs.pr-target }}' > /tmp/target_branch.txt
+        # Use environment variables to safely handle special characters
         
-        # Read from files to avoid shell interpretation issues
-        PR_TITLE=$(cat /tmp/pr_title.txt)
-        PR_DESCRIPTION=$(cat /tmp/pr_description.txt | tr -d '\r' | sed 's/`/'"'"'/g' | head -c 500)
-        PR_URL=$(cat /tmp/pr_url.txt)
-        PR_AUTHOR=$(cat /tmp/pr_author.txt)
-        PR_BRANCH=$(cat /tmp/pr_branch.txt)
-        TARGET_BRANCH=$(cat /tmp/target_branch.txt)
+        # Clean and truncate description safely
+        CLEANED_DESCRIPTION=$(printf '%s' "$PR_DESCRIPTION" | tr -d '\r' | head -c 500)
+        if [ ${#CLEANED_DESCRIPTION} -eq 500 ]; then
+          CLEANED_DESCRIPTION="${CLEANED_DESCRIPTION}..."
+        fi
         
         # Add repository context if provided
         REPO_CONTEXT=""
-        if [ -n "${{ inputs.repository-name }}" ]; then
-          REPO_CONTEXT="*Repository:* ${{ inputs.repository-name }}\n"
-        fi
-        
-        # Add truncation indicator if needed
-        if [ ${#PR_DESCRIPTION} -eq 500 ]; then
-          PR_DESCRIPTION="${PR_DESCRIPTION}..."
+        if [ -n "$REPOSITORY_NAME" ]; then
+          REPO_CONTEXT="*Repository:* $REPOSITORY_NAME\n"
         fi
         
         # Determine action type for message
-        case "${{ inputs.action-type }}" in
+        case "$ACTION_TYPE_INPUT" in
           "edited")
             ACTION_TYPE="📝 *Pull Request Updated*"
             ;;
@@ -90,13 +87,13 @@ runs:
         ${REPO_CONTEXT}*Title:* $PR_TITLE
         *Author:* $PR_AUTHOR
         *Branch:* $PR_BRANCH → $TARGET_BRANCH
-        *Description:* ${PR_DESCRIPTION:-No description provided}
+        *Description:* ${CLEANED_DESCRIPTION:-No description provided}
         
         *Link:* $PR_URL
         EOF
         
         # Debug: Check if webhook URL is available
-        if [ -z "${{ inputs.webhook-url }}" ]; then
+        if [ -z "$WEBHOOK_URL" ]; then
           echo "❌ ERROR: webhook-url input is not provided"
           echo "Please provide the Slack webhook URL as an input"
           exit 1
@@ -109,7 +106,7 @@ runs:
         RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
           -H 'Content-type: application/json' \
           -d "$(jq -n --rawfile text /tmp/slack_message.txt '{text: $text}')" \
-          "${{ inputs.webhook-url }}")
+          "$WEBHOOK_URL")
         
         # Extract HTTP status code (last line)
         HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -124,4 +121,4 @@ runs:
         fi
         
         # Clean up temporary files
-        rm -f /tmp/pr_title.txt /tmp/pr_description.txt /tmp/pr_url.txt /tmp/pr_author.txt /tmp/pr_branch.txt /tmp/target_branch.txt /tmp/slack_message.txt
+        rm -f /tmp/slack_message.txt
